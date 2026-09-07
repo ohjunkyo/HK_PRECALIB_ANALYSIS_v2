@@ -179,18 +179,9 @@ TF1* FitGaussian(TH1D* hist, double pedestalMin, double pedestalMax, double sign
 
     hist->Fit(total_fit, "RMQ+");
 
-    // signalMean is a SUM of two fit parameters (Ped_Mean + SPE_Gain), so its
-    // error needs both parameters' own uncertainty AND their covariance --
-    // using GetParError(3) alone silently dropped Ped_Mean's contribution
-    // entirely, which is usually small but not negligible, and let the
-    // reported error be smaller than it should be even on healthy fits
-    // (2026-08-30/31 investigation into the Gain Curve's implausibly tight
-    // errors at low HV; see project memory "gain-curve-spe-fit-decision").
-    // Note this does NOT fully fix the low-HV (P/V~1.0) case -- there the
-    // Hesse matrix itself is unreliable regardless of how its entries are
-    // combined, which is why Draw_GainCurve_v1.C separately excludes those
-    // points by P/V ratio. This is the correct fix for every other point.
-    signalMean = total_fit->GetParameter(2) + total_fit->GetParameter(3);
+    // signalMean is a SUM of two fit parameters (Ped_Mean + SPE_Gain)
+
+        signalMean = total_fit->GetParameter(2) + total_fit->GetParameter(3);
     {
         double errPed = total_fit->GetParError(2);
         double errSpe = total_fit->GetParError(3);
@@ -201,11 +192,6 @@ TF1* FitGaussian(TH1D* hist, double pedestalMin, double pedestalMax, double sign
     }
     double finalMu = total_fit->GetParameter(1);
     double resolution = total_fit->GetParameter(5) / total_fit->GetParameter(3) * 100;
-    // Charge resolution = SPE_Sigma/SPE_Gain, propagated the same
-    // independent-parameter-error way as every other ratio in this file
-    // (e.g. MonitorNormalize) -- SPE_Sigma and SPE_Gain are technically
-    // correlated fit parameters, but this codebase's convention elsewhere
-    // is the simpler independent approximation, not the full covariance.
     {
         double speSigma = total_fit->GetParameter(5), speSigmaErr = total_fit->GetParError(5);
         double speGain = total_fit->GetParameter(3), speGainErr = total_fit->GetParError(3);
@@ -298,13 +284,6 @@ TF1* FitGaussian(TH1D* hist, double pedestalMin, double pedestalMax, double sign
         }
     }
     double valleyX = (valleyBin != -1) ? hist->GetXaxis()->GetBinCenter(valleyBin) : (pMean + roughMean) / 2.0;
-    // Peak and valley must come from the SAME curve/histogram that's actually
-    // drawn (hist, and its red Total Fit curve), not finalSigFit -- that's
-    // only a throwaway single-Gaussian pre-fit used to seed total_fit's
-    // initial parameters, fit on hist2 (the amplitude-thresholded SUBSET),
-    // while valleyY above is read from hist (the full, unfiltered spectrum).
-    // Mixing a subset-histogram pre-fit peak with a full-histogram valley
-    // made P/V inconsistent with what the plot shows.
     double peakY = total_fit->Eval(signalMean);
     double peakToValleyRatio = (valleyY > 0) ? peakY / valleyY : 0.0;
     if (peakToValleyOut) *peakToValleyOut = peakToValleyRatio;
@@ -422,12 +401,7 @@ void read_ntp_v7(int run, const char* processedFilePath = "") {
     if(nAnalysisCh > 0) { c1->Divide(2, nAnalysisCh); c2->Divide(nAnalysisCh, 1); c3->Divide(nAnalysisCh, 1); }
 
     double qeDarkCorrB, qeDarkCorrErrB, ttsB, ttsErrB, speMeanB, speMeanErrorB, qeAbsB, qeAbsErrB;
-    // Same exGaus fit that gives rms_exG (TTS) -- fwhm/sigma were already
-    // computed for the diagnostic plot's guide lines but never saved to a
-    // branch. 2026-09-03, 장지승 박사님 (chat via user): "FWHM으로 같은
-    // 방식으로 봐보세" -- add FWHM and the fit's own core sigma alongside
-    // TTS, same units (samples, *2ns downstream) and same fit.
-    double fwhmB, fwhmErrB, sigmaB, sigmaErrB;
+        double fwhmB, fwhmErrB, sigmaB, sigmaErrB;
     double poissonMuB, poissonQeB, poissonQeRawB, poissonMuMaxB, poissonQeMaxB, poissonQeRawMaxB;
     double chargeResolutionB, chargeResolutionErrB;
     double pvRatioB;   // peak-to-valley -- previously only drawn as TLatex text, never saved
@@ -625,19 +599,7 @@ void read_ntp_v7(int run, const char* processedFilePath = "") {
         }
 
         double tLow  = useSecondShift ? 170 : (useShortCable ? 180 : 195);
-        double tHigh = useSecondShift ? 190 : (useShortCable ? 200 : 215);
-        // Re-center on this run's own fitted timing peak (meanFit), same
-        // width as before -- used to be ch0(Monitor)-only, leaving ch1/ch2
-        // (Rot1/Rot2) on the old fixed absolute window even though the real
-        // peak walks with gain (measured ~8 samples/16ns across the HV
-        // campaign, HV-driven and monotonic, vs only ~3 samples of
-        // angle-to-angle jitter at fixed HV -- see project memory
-        // "pending-adaptive-threshold-fix"). Safely inside the fixed window
-        // for every point tested so far, but margin had shrunk to ~3.5
-        // samples at the high-HV end; this removes that fragility for all
-        // three channels uniformly instead of just Monitor (2026-08-31,
-        // user: "Timing cut은 Peak 기준으로 너비가 동일해야할 것 같은데,
-        // 모든 PMT가").
+
         {
             double halfWidth = (tHigh - tLow) / 2.0;
             tLow  = meanFit - halfWidth;
@@ -669,10 +631,7 @@ void read_ntp_v7(int run, const char* processedFilePath = "") {
             double fwhmHigh = exGausFit->GetX(halfMax, peakX, peakX + 8*tauP + 5);
             fwhm = fwhmHigh - fwhmLow;
             fwhmB = fwhm;
-            // No closed-form FWHM error from exGaus root-finding; reuse TTS's
-            // own (already-relative) fit-uncertainty fraction as an estimate --
-            // both widths come from the same fit and move together.
-            fwhmErrB = fwhm * ttsErrB;
+                    fwhmErrB = fwhm * ttsErrB;
 
             histDiff->GetXaxis()->SetRangeUser(tLow - 5, tHigh + 5);
 
