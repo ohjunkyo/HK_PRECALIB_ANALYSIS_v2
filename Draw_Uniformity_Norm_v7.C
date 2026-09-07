@@ -137,9 +137,6 @@ void MonitorNormalize(const std::vector<double>& tiltRaw, const std::vector<doub
 //   monNorm...  : additionally divided by the monitor PMT (CH0) at the same
 //                 raw tilt, correcting shot-to-shot laser-intensity drift
 //
-// NOTE: the old code used the prefix "raw_" for BOTH "not angle-normalized"
-// (members) and "not dark-subtracted" (ntuple branches). Those two unrelated
-// meanings are now spelled Abs and <absence of DarkCorr> respectively.
 struct PMTData {/*{{{*/
     std::vector<TString> fileName;
     std::vector<double> rotAngle, tiltRaw, tiltFlipped, tiltHamamatsu;
@@ -151,12 +148,9 @@ struct PMTData {/*{{{*/
     std::vector<double> poissonQeAbs, poissonQeAbsErr, poissonQeNorm, poissonQeNormErr;  // QE from the Poisson-mu fit
     std::vector<double> tts, ttsErr;
     std::vector<double> fwhm, fwhmErr, sigma, sigmaErr;   // same exGaus fit as TTS
-    // -- 장지승 박사님 (2026-09-03, via chat): "FWHM으로 같은 방식으로 봐보세"
     std::vector<double> pedMean, pedSigma;
-    // Monitor(CH0)-normalized: Test_absolute / Monitor_absolute at the matching raw
-    // tilt, computed BEFORE NormalizeData() mutates the source vectors in place --
-    // corrects for shot-to-shot laser-intensity drift using the non-rotating
-    // monitor PMT as reference, independent of the existing |tilt|<48deg centering.
+    // Monitor(CH0)-normalized: Test/Monitor at the matching raw tilt, taken
+    // before NormalizeData() runs. Corrects laser-intensity drift.
     std::vector<double> monNormQe, monNormQeErr, monNormQeDarkCorr, monNormQeDarkCorrErr;
     std::vector<double> monNormPoissonQeAbs, monNormPoissonQeAbsErr, monNormPoissonQe, monNormPoissonQeErr;
     std::vector<double> monNormSpe, monNormSpeErr;
@@ -229,11 +223,8 @@ void FillData(PMTUnit& p, TString dirPath, TString tag, int run_start, int run_e
         if (TString(runModeBuf) == "Dark") { fResult->Close(); continue; }
 
         int currentRotAngle = (p.channel == 1 || p.channel == 0) ? rawRotateAngle2 : rawRotateAngle3;
-        // For ch0 this is NOT the monitor's own orientation -- the monitor PMT
-        // does not rotate at all. RunInfo only stores stage angles for Devices
-        // 2/3, so ch0 borrows Device 2's rotation purely as a key for "was this
-        // run taken during the X-axis block or the Y-axis block".
-        //
+        // ch0 borrows Device 2's rotation only as an X/Y-block tag; the
+        // monitor PMT itself never rotates.
 
         int targetRotAngle = isX ? p.xScanRotAngle : p.yScanRotAngle;
         if (currentRotAngle != targetRotAngle) { fResult->Close(); continue; }
@@ -346,7 +337,7 @@ void FillData(PMTUnit& p, TString dirPath, TString tag, int run_start, int run_e
                 d.poissonQeAbs.push_back(poissonQeAbsVal);
 
                 double poissonQeErrVal = (qeDarkCorrVal > 0) ? (qeDarkCorrErrVal / qeDarkCorrVal) * poissonQeVal : 0;
-                // Raw 값에 대한 에러는 Raw Counting의 에러 비율을 연동하여 계산
+                // Error on the raw value follows the raw-counting relative error.
                 double poissonQeAbsErrVal = (qeAbsVal > 0) ? (qeAbsErrVal / qeAbsVal) * poissonQeAbsVal : 0;
 
                 d.poissonQeNormErr.push_back(poissonQeErrVal);
@@ -547,25 +538,15 @@ void Draw_Uniformity_Norm_v7(TString tag = "20260331", int run_start = 0, int ru
     }
     // =========================================================================
 
-    // xScanRotAngle/yScanRotAngle derived from each PMT's actual cable
-    // direction (angle_convert.h) instead of assuming everything is wired
-    // 'B' -- a unit wired 'H' (or any other letter) now gets the correct
-    // rotation targets instead of being silently mis-scanned.
+    // Scan rotation targets from each PMT's own cable direction (angle_convert.h).
     int x_rot2, y_rot2, x_rot3, y_rot3;
     GetXYRotForDirection(dir2_c, x_rot2, y_rot2);
     GetXYRotForDirection(dir3_c, x_rot3, y_rot3);
 
-    // ch0 is the monitor PMT: it never rotates, so it has no scan rotation of
-    // its own. It takes Device 2's targets because RunInfo records only Devices
-    // 2/3, making Device 2's angle the de-facto "which axis block" tag on every
-    // run (see FillData). For a 'B'-wired Device 2 these are 45/135 -- identical
-    // to the value ch0 hardcoded before, so older data is unaffected.
+    // ch0 (monitor) never rotates; it takes Device 2's targets as its axis tag.
     PMTUnit pmt[3] = {
-        // ch0's `direction` is Device 2's cable, NOT the monitor's own ('A'):
-        // every angle ch0 is plotted against is Device 2's stage angle (see
-        // FillData), so the sign convention has to be read with Device 2's
-        // cable too or the monitor's points land mirrored against the very
-        // scan they annotate.
+        // ch0 uses Device 2's cable direction, since it is plotted against
+        // Device 2's stage angle.
         {sn1_str, dir2_c, hv1_str, 0, x_rot2, y_rot2},
         {sn2_str, dir2_c, hv2_str, 1, x_rot2, y_rot2},
         {sn3_str, dir3_c, hv3_str, 2, x_rot3, y_rot3}
@@ -651,13 +632,8 @@ void Draw_Uniformity_Norm_v7(TString tag = "20260331", int run_start = 0, int ru
         //   else if (pmt_idx == 2) color = (method == 2 || method == 3) ? kRed : kBlue;
         //   else if (pmt_idx == 0) color = (method == 2 || method == 3) ? kRed : kBlue;
 
-        // Each PMT gets its own marker family so CH0 (monitor) and CH2 are
-        // distinguishable by shape, not only by colour. Within a family the
-        // open/filled shape still encodes the QE method (Counting vs Poisson)
-        // -- Counting (PHC + Timing cut) is now the PRIMARY QE method, so it
-        // gets the FILLED (solid) marker; Poisson is the secondary/reference
-        // method and gets the OPEN marker. (Previously the other way around,
-        // from when Poisson was primary.)
+        // Marker shape = PMT, fill = QE method: filled for Counting (primary),
+        // open for Poisson (reference).
         if (pmt_idx == 0) { // Monitor CH0
             if      (method == 0 || method == 1) marker = 20; // Counting: Filled Circle
             else if (method == 2 || method == 3) marker = 25; // Poisson : Open Square
@@ -683,12 +659,8 @@ void Draw_Uniformity_Norm_v7(TString tag = "20260331", int run_start = 0, int ru
     for (int i = 0; i < 3; ++i) {
         auto prep = [&](PMTData& d) {
             if(d.tiltHamamatsu.empty()) return;
-            // X axis source. Default stays the Hamamatsu incidence angle (the
-            // convention every previous report used); xaxis="rawstage" plots
-            // against the stage angle actually commanded during the scan
-            // instead, which is what the DAQ GUI's live view and the scan
-            // matrix are keyed on -- so a point can be matched up between a
-            // finished report and the run that produced it.
+            // X axis: Hamamatsu incidence angle by default,
+            // xaxis="rawstage" for the commanded stage angle instead.
             const std::vector<double>& X = kUseRawStageAxis ? d.tiltRaw : d.tiltHamamatsu;
             d.grSpeNorm = new TGraphErrors(X.size(), &X[0], &d.speNorm[0], 0, &d.speNormErr[0]);
             d.grQeNorm = new TGraphErrors(X.size(), &X[0], &d.qeNorm[0], 0, &d.qeNormErr[0]);
@@ -706,11 +678,8 @@ void Draw_Uniformity_Norm_v7(TString tag = "20260331", int run_start = 0, int ru
             d.grPoissonQeNorm = new TGraphErrors(X.size(), &X[0], &d.poissonQeNorm[0], 0, &d.poissonQeNormErr[0]);
             d.grPoissonQeAbs = new TGraphErrors(X.size(), &X[0], &d.poissonQeAbs[0], 0, &d.poissonQeAbsErr[0]);
 
-            // Raw-stage-angle companion: y = raw stage tilt at the same point,
-            // x = whatever the report is plotted against. Downstream tools
-            // (Overlay, the live GUI view) read this to label a point with the
-            // stage angle that produced it without having to re-derive the
-            // sign convention themselves.
+            // Companion graph carrying the raw stage tilt, so downstream tools
+            // can label a point without re-deriving the sign convention.
             d.grRawStageAngle = new TGraphErrors(X.size(), &X[0], &d.tiltRaw[0], 0, 0);
 
             // Monitor-normalized graphs: empty for the monitor itself (i==0, never

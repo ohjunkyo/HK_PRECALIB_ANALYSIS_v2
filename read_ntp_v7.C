@@ -485,10 +485,7 @@ void read_ntp_v7(int run, const char* processedFilePath = "") {
         double Config_SigWindow_ns  = pSig->GetVal();
         double NoiseRate            = pNR->GetVal();
         double NoiseCount           = (double)pNC->GetVal();
-        // Carry NoiseCountRate through to the result file -- prod_ntp_v7.C
-        // writes it into the prd file but nothing here re-wrote it into the
-        // result file, so downstream consumers (e.g. Draw_Stability_v1.C's
-        // Dark Rate page) that only ever open result files couldn't see it.
+        // Carry NoiseCountRate through to the result file.
         outFile->cd();
         (new TParameter<double>(Form("NoiseCountRate_ch%d", ch), NoiseRate))->Write();
 
@@ -599,7 +596,10 @@ void read_ntp_v7(int run, const char* processedFilePath = "") {
         }
 
         double tLow  = useSecondShift ? 170 : (useShortCable ? 180 : 195);
+        double tHigh = useSecondShift ? 190 : (useShortCable ? 200 : 215);
 
+        // Timing cut: same width as above, re-centred on this run's own fitted
+        // peak. Applied to all three channels.
         {
             double halfWidth = (tHigh - tLow) / 2.0;
             tLow  = meanFit - halfWidth;
@@ -766,11 +766,8 @@ void read_ntp_v7(int run, const char* processedFilePath = "") {
         }
         std::cout << "  --------------------------------------------------------------" << std::endl;
 
-        // QE label on the charge plot, below the fit-parameter stack.
-        //   QE_PHC  = counting (pulse-height cut) method,  Final (raw)
-        // QE_Poisson dropped from this plot (charge-distribution page is PHC-only now);
-        // the Poisson numbers are still computed/printed in the console table and
-        // stored in the poisson_qe* branches for anyone who wants them downstream.
+        // QE label on the charge plot: PHC (counting) method only.
+        // Poisson QE is still printed to the console and stored in poisson_qe*.
         pad1->cd();
         TLatex* qePhcText = new TLatex(0.55, 0.24, fitEmpty
             ? "QE_{PHC}: Fit Empty"

@@ -27,12 +27,7 @@
 #include "path_builder2.h"
 #include "angle_convert.h"
 
-// Changed 3 -> 1.5mV (2026-09-01, user decision after diagnostic testing --
-// see project memory "pending-adaptive-threshold-fix"). This constant feeds
-// the amplitude cut, the diff/timing-crossing calculation, AND the dark
-// count -- all three move together by design (single shared threshold).
-// Full campaign reprocessed from RAW after this change (prod_ntp_v7.C
-// output changes, not just read_ntp_v7.C's).
+// Shared threshold: amplitude cut, timing crossing and dark count all use it.
 const double Analysis_Threshold_mV = 1.5;
 
 Double_t exGausPDF(Double_t *x, Double_t *par) {/*{{{*/
@@ -336,12 +331,7 @@ void prod_ntp_v7(int run, const char* rawFilePath = "") {
             pedestalB = GetPedestal(ADC.data(), pedStart, pedEnd, nSamples);
             double thresholdB = pedestalB - (Analysis_Threshold_mV / Config::ADC_to_mV);
 
-            // Count dark hits over the SAME window (noiseStart..noiseEnd) that
-            // totalNoiseLiveTime (Config_DarkWindow_ns) is measured over. The
-            // previous "_full" variant scanned noiseStart..nSamples (~3x wider,
-            // including the trigger/signal region) while livetime stayed narrow,
-            // inflating NoiseCountRate to ~30-90kHz for every channel/date
-            // (real PMT dark rates are O(100-1000) Hz) -- fixed 2026-07-14.
+            // Dark hits counted over the same window totalNoiseLiveTime covers.
             std::vector<int> darkPulseTimes = GetTimesBelowThreshold(ADC.data(), thresholdB, nSamples, noiseStart, noiseEnd);
             if (ch != TriggerCh && darkPulseTimes.size() > 0) {
                 noiseHits[i] += (long long)darkPulseTimes.size();
@@ -440,10 +430,7 @@ void prod_ntp_v7(int run, const char* rawFilePath = "") {
         }
     }
 
-    // NoiseMap canvas removed (2026-08-25): it was drawn and written out for
-    // every single run, and nothing downstream reads the PNG. The underlying
-    // histNoise* histograms are still filled and still written into the
-    // output file, so the information is not lost -- only the per-run image.
+    // NoiseMap canvas removed; histNoise* still written to the output file.
 
     TCanvas *c1 = new TCanvas(Form("c1_prod_run%d", run), Form("Production for Run %d", run), 3200, 2000);
     int drawPads = 0;
@@ -457,11 +444,8 @@ void prod_ntp_v7(int run, const char* rawFilePath = "") {
     std::cout << "  - Total Events    : " << NEntry << " entries" << std::endl;
     std::cout << "--------------------------------------------------------------" << std::endl;
 
-    // Dark mode: every recorded event is a real trigger, so the direct,
-    // full-statistics dark rate is selfTrigCount/LiveTime (see selfTrigCount's
-    // declaration comment). Laser mode keeps the original windowed-count rate
-    // (noiseHits/totalNoiseLiveTime) -- its trigger rate is set by the laser,
-    // not the PMT, so counting real triggers wouldn't measure dark rate at all.
+    // Dark mode: rate = selfTrigCount/LiveTime (every event is a real trigger).
+    // Laser mode: windowed count, since the laser sets the trigger rate.
     std::vector<long long> noiseCountOut(channelCount, 0LL);
     std::vector<double> noiseRateOut(channelCount, 0.0);
     std::vector<double> noiseLiveTimeOut(channelCount, 0.0);
@@ -477,10 +461,7 @@ void prod_ntp_v7(int run, const char* rawFilePath = "") {
         }
     }
 
-    // Measured (not window-extrapolated) dark rate inside the actual signal
-    // integration range, from real laser-off data. Only meaningful in dark
-    // mode -- in laser mode sigStart..sigEnd is dominated by real photon
-    // hits, so counting "dark" there would mean nothing.
+    // Dark rate measured inside the signal window. Dark mode only.
     std::vector<double> sigWinDarkRateOut(channelCount, 0.0);
     if (darkmode) {
         for (int i = 0; i < channelCount; ++i)
